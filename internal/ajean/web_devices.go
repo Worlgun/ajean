@@ -299,14 +299,17 @@ func vulkanVramGPUs() []map[string]any {
 	return gpus
 }
 
-// applyWindowsDedicatedUsage corrige "used" sur Windows avec la VRAM dédiée
-// RÉELLEMENT commise sur chaque carte, tout process confondu (compteur système
-// « GPU Adapter Memory »). --list-devices, lui, sonde la mémoire depuis un
-// process llama.cpp FRAÎCHEMENT lancé rien que pour l'énumération : sur AMD, ce
-// process ne voit pas la VRAM déjà retenue par l'instance en cours d'exécution
-// (le vrai serveur), donc "used" ressort proche de 0 pendant qu'un modèle de
-// 14 Go tourne. Le compteur Windows, lui, mesure l'adaptateur au niveau système
-// et ne se trompe pas.
+// applyWindowsDedicatedUsage corrige "used" et "util" sur Windows avec les
+// valeurs RÉELLES de chaque carte, tout process confondu (compteurs système
+// « GPU Adapter Memory » + « GPU Engine »). --list-devices, lui, sonde la
+// mémoire depuis un process llama.cpp FRAÎCHEMENT lancé rien que pour
+// l'énumération : sur AMD, ce process ne voit pas la VRAM déjà retenue par
+// l'instance en cours d'exécution (le vrai serveur), donc "used" ressort
+// proche de 0 pendant qu'un modèle de 14 Go tourne — et il n'a de toute façon
+// aucune notion d'utilisation GPU. "temp" reste à 0 : Windows n'expose la
+// température d'aucun GPU par WMI/perfmon (contrairement à nvidia-smi), seule
+// une API DirectX bas niveau le permettrait (celle qu'utilise Task Manager
+// depuis Windows 11 22H2) — hors de portée d'un simple appel PowerShell.
 //
 // Reste à savoir QUELLE carte (LUID) correspond à quel device Vulkan : Windows
 // n'expose cette correspondance nulle part simplement en PowerShell/WMI. On
@@ -317,40 +320,68 @@ func vulkanVramGPUs() []map[string]any {
 // concentre le "Dedicated Usage". On assigne donc les cartes dont le nom Vulkan
 // ne contient pas "intel" aux LUID triés par Dedicated Usage décroissant ; les
 // cartes intégrées gardent la valeur (proche de 0, donc déjà correcte) issue de
-// --list-devices. Best-effort : une erreur PowerShell laisse "used" tel quel.
+// --list-devices. Best-effort : une erreur PowerShell laisse "used"/"util" tels quels.
 func applyWindowsDedicatedUsage(gpus []map[string]any) {
 	if runtime.GOOS != "windows" || len(gpus) == 0 {
 		return
 	}
-	adapters := windowsAdapterDedicatedUsageMiB()
+	adapters := windowsAdapterStats()
 	if len(adapters) == 0 {
 		return
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(adapters)))
+	sort.Slice(adapters, func(i, j int) bool { return adapters[i].DedicatedMiB > adapters[j].DedicatedMiB })
+	// Température : au mieux, via l'ADL d'AMD (voir web_devices_adl_windows.go).
+	// Ni WMI ni perfmon n'exposent cette donnée sur Windows ; pas de repli pour
+	// Intel (rien d'équivalent n'est accessible sans SDK propriétaire), donc son
+	// "temp" reste à 0, comme le Gestionnaire des tâches lui-même l'affiche.
+	amdTemp, amdTempOK := adlAMDHotspotTempC()
+	amdTempUsed := false
 	ai := 0
 	for _, g := range gpus {
 		name, _ := g["name"].(string)
 		if strings.Contains(strings.ToLower(name), "intel") {
 			continue
 		}
-		if ai >= len(adapters) {
-			break
+		if amdTempOK && !amdTempUsed {
+			g["temp"] = amdTemp
+			amdTempUsed = true
 		}
-		g["used"] = adapters[ai]
+		if ai >= len(adapters) {
+			continue
+		}
+		g["used"] = adapters[ai].DedicatedMiB
+		g["util"] = adapters[ai].UtilPct
 		ai++
 	}
 }
 
-// windowsAdapterDedicatedUsageMiB liste la VRAM dédiée commise (MiB) de chaque
-// adaptateur graphique réel, via le compteur de performance Windows « GPU
-// Adapter Memory » (formaté en WMI). On filtre les adaptateurs dont le total
-// commis est négligeable (<5 Mio) : un adaptateur d'affichage virtuel (Parsec,
-// etc.) n'est pas un GPU de calcul et fausserait l'appariement.
-func windowsAdapterDedicatedUsageMiB() []int {
-	const script = `$d = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory -ErrorAction Stop | ` +
-		`Where-Object { $_.TotalCommitted -gt 5MB } | Select-Object DedicatedUsage; ` +
-		`[PSCustomObject]@{items=$d} | ConvertTo-Json -Compress -Depth 3`
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// windowsAdapterStat regroupe VRAM dédiée commise (MiB) et % d'utilisation
+// max (tous types de moteur confondus : 3D, Compute, Copy…) pour un même LUID
+// — les deux mesures viennent du même appel PowerShell pour rester appariées.
+type windowsAdapterStat struct {
+	DedicatedMiB int
+	UtilPct      int
+}
+
+// windowsAdapterStats interroge les compteurs de performance Windows « GPU
+// Adapter Memory » (VRAM dédiée, par LUID) et « GPU Engine » (utilisation,
+// par process+LUID+moteur — on prend le MAX tous moteurs et process confondus
+// pour un LUID donné, comme le fait le Gestionnaire des tâches). On filtre
+// les adaptateurs dont le total commis est négligeable (<5 Mio) : un
+// adaptateur d'affichage virtuel (Parsec, etc.) n'est pas un GPU de calcul et
+// fausserait l'appariement.
+func windowsAdapterStats() []windowsAdapterStat {
+	const script = `$mem = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory -ErrorAction Stop | ` +
+		`Where-Object { $_.TotalCommitted -gt 5MB } | Select-Object Name, DedicatedUsage; ` +
+		`$eng = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue; ` +
+		`$r = foreach ($m in $mem) { ` +
+		`  $u = 0; ` +
+		`  if ($eng) { $hit = $eng | Where-Object { $_.Name -like "*$($m.Name)*" }; if ($hit) { $mx = ($hit | Measure-Object -Property UtilizationPercentage -Maximum).Maximum; if ($mx -gt $u) { $u = $mx } } }; ` +
+		`  if ($u -gt 100) { $u = 100 }; ` +
+		`  [PSCustomObject]@{dedicated=$m.DedicatedUsage; util=[int]$u} ` +
+		`}; ` +
+		`[PSCustomObject]@{items=$r} | ConvertTo-Json -Compress -Depth 3`
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	out, err := hideCmd(exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)).Output()
 	if err != nil || len(out) == 0 {
@@ -358,15 +389,16 @@ func windowsAdapterDedicatedUsageMiB() []int {
 	}
 	var parsed struct {
 		Items []struct {
-			DedicatedUsage int64 `json:"DedicatedUsage"`
+			Dedicated int64 `json:"dedicated"`
+			Util      int   `json:"util"`
 		} `json:"items"`
 	}
 	if json.Unmarshal(out, &parsed) != nil {
 		return nil
 	}
-	miB := make([]int, 0, len(parsed.Items))
+	stats := make([]windowsAdapterStat, 0, len(parsed.Items))
 	for _, it := range parsed.Items {
-		miB = append(miB, int(it.DedicatedUsage/(1024*1024)))
+		stats = append(stats, windowsAdapterStat{DedicatedMiB: int(it.Dedicated / (1024 * 1024)), UtilPct: it.Util})
 	}
-	return miB
+	return stats
 }
