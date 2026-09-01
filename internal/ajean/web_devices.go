@@ -330,31 +330,70 @@ func applyWindowsDedicatedUsage(gpus []map[string]any) {
 		return
 	}
 	sort.Slice(adapters, func(i, j int) bool { return adapters[i].DedicatedMiB > adapters[j].DedicatedMiB })
-	// Température : via l'ADL d'AMD (voir web_devices_adl_windows.go). Deux
-	// bugs y ont été trouvés et corrigés avant de rebrancher cet appel : une
-	// fuite de callback Windows (table épuisée après ~2000 appels cumulés) et
-	// un accès concurrent non sérialisé dans atiadlxx.dll (crash sous charge
-	// réelle — plusieurs requêtes web en parallèle entrant dans la DLL en même
-	// temps). adlAMDHotspotTempC tient maintenant un mutex sur tout son appel ;
-	// voir web_devices_adl_windows.go pour le détail des deux incidents.
-	amdTemp, amdTempOK := adlAMDHotspotTempC()
-	amdTempUsed := false
+
+	// Température + puissance + ventilateur : via l'ADL d'AMD (voir
+	// web_devices_adl_windows.go). Deux bugs y ont été trouvés et corrigés
+	// avant de rebrancher cet appel : une fuite de callback Windows (table
+	// épuisée après ~2000 appels cumulés) et un accès concurrent non
+	// sérialisé dans atiadlxx.dll (crash sous charge réelle — plusieurs
+	// requêtes web en parallèle entrant dans la DLL en même temps).
+	// adlAMDSensors tient maintenant un mutex sur tout son appel ; voir
+	// web_devices_adl_windows.go pour le détail des deux incidents.
+	sensors := adlAMDSensors()
+	sensorsUsed := false
+
+	claimed := make([]bool, len(adapters))
 	ai := 0
 	for _, g := range gpus {
 		name, _ := g["name"].(string)
 		if strings.Contains(strings.ToLower(name), "intel") {
 			continue
 		}
-		if amdTempOK && !amdTempUsed {
-			g["temp"] = amdTemp
-			amdTempUsed = true
+		if !sensorsUsed {
+			if sensors.HasTemp {
+				g["temp"] = sensors.TempC
+			}
+			if sensors.HasPow {
+				g["power_w"] = sensors.PowerW
+			}
+			if sensors.HasRPM {
+				g["fan_rpm"] = sensors.FanRPM
+			}
+			if sensors.HasPct {
+				g["fan_pct"] = sensors.FanPct
+			}
+			sensorsUsed = true
 		}
 		if ai >= len(adapters) {
 			continue
 		}
 		g["used"] = adapters[ai].DedicatedMiB
 		g["util"] = adapters[ai].UtilPct
+		claimed[ai] = true
 		ai++
+	}
+
+	// GPU intégré (Intel, ou un iGPU AMD) : sa VRAM dédiée reste ~0, c'est
+	// correct tel quel (issu de --list-devices) — un iGPU n'a pas de VRAM à
+	// lui. Son % d'utilisation, en revanche, vient du même relevé Windows que
+	// les cartes discrètes ; on l'assigne depuis les entrées d'adaptateur non
+	// réclamées par la boucle ci-dessus (typiquement celles à VRAM dédiée
+	// quasi nulle, puisque triées décroissant et déjà consommées en tête).
+	ii := 0
+	for _, g := range gpus {
+		name, _ := g["name"].(string)
+		if !strings.Contains(strings.ToLower(name), "intel") {
+			continue
+		}
+		for ii < len(adapters) && claimed[ii] {
+			ii++
+		}
+		if ii >= len(adapters) {
+			continue
+		}
+		g["util"] = adapters[ii].UtilPct
+		claimed[ii] = true
+		ii++
 	}
 }
 

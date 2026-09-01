@@ -47,6 +47,11 @@ const (
 	adlPMLogMaxSensor = 256
 	adlSensorHotspot  = 27 // ADL_PMLOG_TEMPERATURE_HOTSPOT
 	adlSensorEdge     = 8  // ADL_PMLOG_TEMPERATURE_EDGE
+	adlSensorBoardPow = 73 // ADL_PMLOG_BOARD_POWER — newer driver revisions only
+	adlSensorAsicPow  = 23 // ADL_PMLOG_ASIC_POWER — long-standing fallback, widely supported
+	adlSensorGfxPow   = 30 // ADL_PMLOG_GFX_POWER — narrower (graphics core only), last resort
+	adlSensorFanRPM   = 14 // ADL_PMLOG_FAN_RPM
+	adlSensorFanPct   = 15 // ADL_PMLOG_FAN_PERCENTAGE
 )
 
 func adlMallocCallback(size uintptr) uintptr {
@@ -129,30 +134,54 @@ type adlPMLogDataOutput struct {
 // under the same load that used to crash it.
 var adlCallMu sync.Mutex
 
-// adlAMDHotspotTempC returns the junction/hotspot temperature (°C) of the
-// first present AMD adapter ADL reports, and whether a real reading was
-// obtained. On a machine with more than one physical AMD GPU this only ever
-// reports the first one — ADL enumerates one entry per display OUTPUT, not
-// per physical card, so reliably telling two real cards apart would need
-// deduplicating by bus/device/function, not attempted here since it's not
-// this machine's situation.
+// adlSensors is every reading adlAMDSensors was able to obtain in one PMLog
+// query — each field's companion bool is false when that specific sensor
+// isn't supported on the card (common for e.g. board power on older ADL
+// revisions), independently of whether any of the others succeeded.
+type adlSensors struct {
+	TempC   int
+	HasTemp bool
+	PowerW  int
+	HasPow  bool
+	FanRPM  int
+	HasRPM  bool
+	FanPct  int
+	HasPct  bool
+}
+
+// adlAMDHotspotTempC returns just the temperature from adlAMDSensors, kept
+// as a thin wrapper since it was the original entry point and other callers
+// may still reasonably want only this one value.
 func adlAMDHotspotTempC() (int, bool) {
+	s := adlAMDSensors()
+	return s.TempC, s.HasTemp
+}
+
+// adlAMDSensors returns temperature, power draw, and fan speed of the first
+// present AMD adapter ADL reports, in a single PMLog query (cheaper than
+// querying each sensor separately, and keeps them from drifting apart from
+// momentary readings taken microseconds apart). On a machine with more than
+// one physical AMD GPU this only ever reports the first one — ADL enumerates
+// one entry per display OUTPUT, not per physical card, so reliably telling
+// two real cards apart would need deduplicating by bus/device/function, not
+// attempted here since it's not this machine's situation.
+func adlAMDSensors() adlSensors {
 	adlCallMu.Lock()
 	defer adlCallMu.Unlock()
 
 	if err := adlDLL.Load(); err != nil {
-		return 0, false
+		return adlSensors{}
 	}
 
 	if r, _, _ := adlProcMainCreate.Call(adlMallocCallbackPtr(), 1); int32(r) != 0 {
-		return 0, false
+		return adlSensors{}
 	}
 	defer adlProcMainDestroy.Call()
 
 	var numAdapters int32
 	adlProcNumAdapters.Call(uintptr(unsafe.Pointer(&numAdapters)))
 	if numAdapters <= 0 {
-		return 0, false
+		return adlSensors{}
 	}
 	infos := make([]adlAdapterInfo, numAdapters)
 	adlProcAdapterInfo.Call(uintptr(unsafe.Pointer(&infos[0])), uintptr(int(unsafe.Sizeof(adlAdapterInfo{}))*int(numAdapters)))
@@ -165,22 +194,27 @@ func adlAMDHotspotTempC() (int, bool) {
 		}
 	}
 	if amdIdx < 0 {
-		return 0, false
+		return adlSensors{}
 	}
 
 	var ctx uintptr
 	if r, _, _ := adlProcMain2Create.Call(adlMallocCallbackPtr(), 1, uintptr(unsafe.Pointer(&ctx))); int32(r) != 0 || ctx == 0 {
-		return 0, false
+		return adlSensors{}
 	}
 	defer adlProcMain2Destroy.Call(ctx)
 
-	// Ask for the hotspot + edge sensors; 0 (ADL_SENSOR_MAXTYPES) terminates
-	// the requested list. Errors here are ignored on purpose: on this driver,
-	// a repeat Start (logging already active from a previous call) errors out
-	// while the query still returns live data just fine.
+	// Ask for temp + power + fan sensors in one go; 0 (ADL_SENSOR_MAXTYPES)
+	// terminates the requested list. Errors here are ignored on purpose: on
+	// this driver, a repeat Start (logging already active from a previous
+	// call) errors out while the query still returns live data just fine.
 	var start adlPMLogStartInput
 	start.Sensors[0] = adlSensorHotspot
 	start.Sensors[1] = adlSensorEdge
+	start.Sensors[2] = adlSensorBoardPow
+	start.Sensors[3] = adlSensorAsicPow
+	start.Sensors[4] = adlSensorGfxPow
+	start.Sensors[5] = adlSensorFanRPM
+	start.Sensors[6] = adlSensorFanPct
 	start.SampleRate = 1000
 	var startOut adlPMLogStartOutput
 	adlProcPMLogStart.Call(ctx, uintptr(amdIdx), uintptr(unsafe.Pointer(&start)), uintptr(unsafe.Pointer(&startOut)))
@@ -188,13 +222,31 @@ func adlAMDHotspotTempC() (int, bool) {
 	var data adlPMLogDataOutput
 	data.Size = int32(unsafe.Sizeof(data))
 	if r, _, _ := adlProcQueryPMLogData.Call(ctx, uintptr(amdIdx), uintptr(unsafe.Pointer(&data))); int32(r) != 0 {
-		return 0, false
+		return adlSensors{}
 	}
+
+	var out adlSensors
 	if hot := data.Sensors[adlSensorHotspot]; hot.Supported != 0 {
-		return int(hot.Value), true
+		out.TempC, out.HasTemp = int(hot.Value), true
+	} else if edge := data.Sensors[adlSensorEdge]; edge.Supported != 0 {
+		out.TempC, out.HasTemp = int(edge.Value), true
 	}
-	if edge := data.Sensors[adlSensorEdge]; edge.Supported != 0 {
-		return int(edge.Value), true
+	// Power: prefer the most complete reading available. BOARD_POWER (total
+	// draw at the connectors) is only on newer driver revisions; ASIC_POWER
+	// (whole chip) is the long-standing, widely-supported fallback; GFX_POWER
+	// (graphics core only, excludes memory/VRMs) is the last resort.
+	if p := data.Sensors[adlSensorBoardPow]; p.Supported != 0 {
+		out.PowerW, out.HasPow = int(p.Value), true
+	} else if p := data.Sensors[adlSensorAsicPow]; p.Supported != 0 {
+		out.PowerW, out.HasPow = int(p.Value), true
+	} else if p := data.Sensors[adlSensorGfxPow]; p.Supported != 0 {
+		out.PowerW, out.HasPow = int(p.Value), true
 	}
-	return 0, false
+	if rpm := data.Sensors[adlSensorFanRPM]; rpm.Supported != 0 {
+		out.FanRPM, out.HasRPM = int(rpm.Value), true
+	}
+	if pct := data.Sensors[adlSensorFanPct]; pct.Supported != 0 {
+		out.FanPct, out.HasPct = int(pct.Value), true
+	}
+	return out
 }
