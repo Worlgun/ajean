@@ -374,12 +374,12 @@ func windowsAdapterStats() []windowsAdapterStat {
 	const script = `$mem = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory -ErrorAction Stop | ` +
 		`Where-Object { $_.TotalCommitted -gt 5MB } | Select-Object Name, DedicatedUsage; ` +
 		`$eng = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue; ` +
-		`$r = foreach ($m in $mem) { ` +
+		`$r = @(foreach ($m in $mem) { ` +
 		`  $u = 0; ` +
 		`  if ($eng) { $hit = $eng | Where-Object { $_.Name -like "*$($m.Name)*" }; if ($hit) { $mx = ($hit | Measure-Object -Property UtilizationPercentage -Maximum).Maximum; if ($mx -gt $u) { $u = $mx } } }; ` +
 		`  if ($u -gt 100) { $u = 100 }; ` +
 		`  [PSCustomObject]@{dedicated=$m.DedicatedUsage; util=[int]$u} ` +
-		`}; ` +
+		`}); ` +
 		`[PSCustomObject]@{items=$r} | ConvertTo-Json -Compress -Depth 3`
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
