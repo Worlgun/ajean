@@ -22,6 +22,7 @@
 package ajean
 
 import (
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -52,6 +53,19 @@ func adlMallocCallback(size uintptr) uintptr {
 	ret, _, _ := adlProcLocalAlloc.Call(0 /* LMEM_FIXED */, size)
 	return ret
 }
+
+// adlMallocCallbackPtr is the ONE native function pointer ADL's malloc
+// callback ever uses, for the lifetime of the process. syscall.NewCallback
+// hands out a fixed-size, never-freed slot each time it's called (~2000 per
+// process on this Go runtime) — calling it fresh inside adlAMDHotspotTempC on
+// every invocation exhausted that table after enough polls of /api/vram (the
+// UI hits it periodically) and crashed the whole ajean-ui process with an
+// access violation deep inside the DLL call. sync.OnceValue makes the actual
+// syscall.NewCallback call happen exactly once, no matter how many times
+// adlAMDHotspotTempC runs.
+var adlMallocCallbackPtr = sync.OnceValue(func() uintptr {
+	return syscall.NewCallback(adlMallocCallback)
+})
 
 // adlAdapterInfo mirrors ADL's AdapterInfo struct (adl_structures.h) exactly:
 // every field is either a 4-byte int or a fixed byte array, so there's no
@@ -113,8 +127,7 @@ func adlAMDHotspotTempC() (int, bool) {
 		return 0, false
 	}
 
-	cb := syscall.NewCallback(adlMallocCallback)
-	if r, _, _ := adlProcMainCreate.Call(cb, 1); int32(r) != 0 {
+	if r, _, _ := adlProcMainCreate.Call(adlMallocCallbackPtr(), 1); int32(r) != 0 {
 		return 0, false
 	}
 	defer adlProcMainDestroy.Call()
@@ -138,9 +151,8 @@ func adlAMDHotspotTempC() (int, bool) {
 		return 0, false
 	}
 
-	cb2 := syscall.NewCallback(adlMallocCallback)
 	var ctx uintptr
-	if r, _, _ := adlProcMain2Create.Call(cb2, 1, uintptr(unsafe.Pointer(&ctx))); int32(r) != 0 || ctx == 0 {
+	if r, _, _ := adlProcMain2Create.Call(adlMallocCallbackPtr(), 1, uintptr(unsafe.Pointer(&ctx))); int32(r) != 0 || ctx == 0 {
 		return 0, false
 	}
 	defer adlProcMain2Destroy.Call(ctx)
