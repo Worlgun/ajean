@@ -22,26 +22,26 @@ function trackerBack(){
 
 async function loadTrackers(){
   const box=document.getElementById('tracker-list'); if(!box) return;
-  let r; try{ r=await jget('/api/tracker'); }catch(_){ box.innerHTML='<span class="muted" style="font-size:12px">erreur de chargement</span>'; return; }
+  let r; try{ r=await jget('/api/tracker'); }catch(_){ box.innerHTML='<span class="muted" style="font-size:12px">'+t('tracker.load_error')+'</span>'; return; }
   const list=(r&&r.trackers)||[];
-  const cnt=document.getElementById('tracker-count'); if(cnt) cnt.textContent = list.length ? (list.length+' tracker'+(list.length>1?'s':'')) : '';
+  const cnt=document.getElementById('tracker-count'); if(cnt) cnt.textContent = list.length ? (list.length+' '+(list.length>1?t('tracker.count_plural'):t('tracker.count_singular'))) : '';
   box.innerHTML='';
-  if(!list.length){ box.innerHTML='<span class="muted" style="font-size:12px">aucun tracker. Crée-en un avec « + tracker » (ex. abonnés, poids, revenus).</span>'; return; }
+  if(!list.length){ box.innerHTML='<span class="muted" style="font-size:12px">'+t('tracker.empty_list')+'</span>'; return; }
   list.forEach(s=>box.appendChild(trackerRow(s)));
 }
 
 function trackerRow(s){
-  const card=document.createElement('div'); card.className='tracker-card'; card.tabIndex=0; card.title='Ouvrir ce tracker';
+  const card=document.createElement('div'); card.className='tracker-card'; card.tabIndex=0; card.title=t('tracker.open_this');
   card.onclick=()=>openTrackerDetail(s.slug, s.name);
   card.onkeydown=(e)=>{ if((e.key==='Enter'||e.key===' ')&&e.target===card){ e.preventDefault(); openTrackerDetail(s.slug, s.name); } };
   const main=document.createElement('div'); main.className='tracker-card-main';
   const name=document.createElement('div'); name.className='tracker-card-name'; name.textContent=s.name;
   const sub=document.createElement('div'); sub.className='tracker-card-sub';
-  sub.textContent = s.count ? (s.count+' point'+(s.count>1?'s':'')+' · maj '+(s.last||'')) : 'vide';
+  sub.textContent = s.count ? (s.count+' '+(s.count>1?t('tracker.point_plural'):t('tracker.point_singular'))+' · '+t('tracker.updated')+' '+(s.last||'')) : t('tracker.empty_single');
   main.appendChild(name); main.appendChild(sub);
   if(s.latest){ const val=document.createElement('div'); val.className='tracker-card-val'; val.textContent=s.latest; main.appendChild(val); }
   card.appendChild(main);
-  const menu=document.createElement('button'); menu.className='sess-menu-btn'; menu.innerHTML=projDotsSvg(); menu.title='Options';
+  const menu=document.createElement('button'); menu.className='sess-menu-btn'; menu.innerHTML=projDotsSvg(); menu.title=t('tracker.options');
   menu.onclick=(e)=>{ e.stopPropagation(); openTrackerMenu(menu, s); };
   card.appendChild(menu);
   return card;
@@ -53,9 +53,9 @@ function openTrackerMenu(anchor, s){
   closeProjMenu();
   const pop=document.createElement('div'); pop.className='pop-menu';
   const item=(icon,label,cls,fn)=>{ const b=document.createElement('button'); if(cls) b.className=cls; b.innerHTML=sessIconSvg(icon)+'<span>'+label+'</span>'; b.onclick=(e)=>{ e.stopPropagation(); closeProjMenu(); fn(); }; return b; };
-  pop.appendChild(item('pencil','Renommer','',()=>trackerRename(s)));
-  if(typeof PROJECTS!=='undefined' && PROJECTS.length>1) pop.appendChild(item('move','Déplacer vers…','',()=>trackerMove(s, anchor)));
-  pop.appendChild(item('trash','Supprimer','danger',()=>trackerDelete(s)));
+  pop.appendChild(item('pencil',t('tracker.rename'),'',()=>trackerRename(s)));
+  if(typeof PROJECTS!=='undefined' && PROJECTS.length>1) pop.appendChild(item('move',t('tracker.move_to'),'',()=>trackerMove(s, anchor)));
+  pop.appendChild(item('trash',t('tracker.delete'),'danger',()=>trackerDelete(s)));
   document.body.appendChild(pop);
   const r=anchor.getBoundingClientRect(); const pw=pop.offsetWidth, ph=pop.offsetHeight;
   let left=Math.max(8, Math.min(r.right-pw, window.innerWidth-pw-8));
@@ -81,17 +81,17 @@ async function trackerRename(s){
 function trackerMove(s, anchor){
   if(typeof pickProjectPop!=='function') return;
   pickProjectPop(anchor||document.body, (typeof ACTIVE_PROJECT!=='undefined'?ACTIVE_PROJECT:''), async(slug)=>{
-    let r; try{ r=await jpost('/api/tracker/move', {slug:s.slug, toSlug:slug}); }catch(_){ toast('erreur réseau'); return; }
-    if(!r.ok){ toast(r.error||'déplacement impossible'); return; }
-    toast('tracker déplacé'); loadTrackers();
+    let r; try{ r=await jpost('/api/tracker/move', {slug:s.slug, toSlug:slug}); }catch(_){ toast(t('tracker.network_error')); return; }
+    if(!r.ok){ toast(r.error||t('tracker.move_failed')); return; }
+    toast(t('tracker.moved')); loadTrackers();
   });
 }
 
 async function trackerDelete(s){
-  if(!await askConfirm('Supprimer le tracker « '+s.name+' » et tous ses points ? Cette action est irréversible.', {title:'Supprimer le tracker', okText:'Supprimer', danger:true})) return;
-  let r; try{ r=await jpost('/api/tracker/delete', {slug:s.slug}); }catch(_){ toast('erreur réseau'); return; }
-  if(!r.ok){ toast(r.error||'suppression impossible'); return; }
-  toast('tracker supprimé');
+  if(!await askConfirm(t('tracker.delete_confirm_prefix')+s.name+t('tracker.delete_confirm_suffix'), {title:t('tracker.delete_title'), okText:t('tracker.delete'), danger:true})) return;
+  let r; try{ r=await jpost('/api/tracker/delete', {slug:s.slug}); }catch(_){ toast(t('tracker.network_error')); return; }
+  if(!r.ok){ toast(r.error||t('tracker.delete_failed')); return; }
+  toast(t('tracker.deleted'));
   if(TRACKER_CUR && TRACKER_CUR.slug===s.slug) trackerBack(); else loadTrackers();
 }
 
@@ -170,12 +170,12 @@ function trackerEventRow(e){
 // date seule = pas d'heure, date + heure = les deux.
 function trackerWhenValue(){
   const d=(document.getElementById('tracker-date')||{}).value||'';
-  const t=(document.getElementById('tracker-time')||{}).value||'';
+  const tv=(document.getElementById('tracker-time')||{}).value||'';
   // Ajout, champs inchangés depuis le préremplissage auto → « maintenant » (le serveur
   // horodate à l'instant réel de soumission, pas à l'ouverture du formulaire).
-  if(!TRACKER_EDIT && TRACKER_WHEN_AUTO && d===TRACKER_WHEN_AUTO.date && t===TRACKER_WHEN_AUTO.time) return '';
+  if(!TRACKER_EDIT && TRACKER_WHEN_AUTO && d===TRACKER_WHEN_AUTO.date && tv===TRACKER_WHEN_AUTO.time) return '';
   if(!d.trim()) return '';
-  return t.trim() ? (d.trim()+' '+t.trim()) : d.trim();
+  return tv.trim() ? (d.trim()+' '+tv.trim()) : d.trim();
 }
 // Réinitialise le formulaire d'ajout : note vide + Date/Heure préremplies à
 // l'instant présent (jamais de champ vide, qui s'affiche en boîte noire sur iOS).
