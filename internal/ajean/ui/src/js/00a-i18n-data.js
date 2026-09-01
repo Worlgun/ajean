@@ -4,9 +4,12 @@
 // "section.sous-clé" (namespacé par panneau pour éviter les collisions au fil
 // des extractions).
 //
-// Pour ajouter une langue : copier un bloc entier ci-dessous, traduire les
-// valeurs (JAMAIS les clés), ajouter le code dans LANG_NAMES (00b-i18n.js) et
-// dans #lang-select (index.tmpl.html). Rien d'autre à toucher.
+// Pour ajouter/compléter une langue, voir docs/TRANSLATING.md (guide pas à
+// pas, y compris pour quelqu'un qui ne connaît ni Go ni JS). En bref : copier
+// un bloc entier ci-dessous, traduire les valeurs (JAMAIS les clés), ajouter
+// le code dans LANG_NAMES (00b-i18n.js) — c'est TOUT, #lang-select dans
+// index.tmpl.html se remplit tout seul depuis LANG_NAMES. Vérifier avec
+// `go run ./tools/verify-i18n` (compare chaque langue au jeu de clés fr).
 var I18N = {
 fr: {
   "appearance.title": "Apparence",
