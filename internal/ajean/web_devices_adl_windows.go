@@ -115,6 +115,20 @@ type adlPMLogDataOutput struct {
 	Sensors [adlPMLogMaxSensor]adlSingleSensorData
 }
 
+// adlCallMu serializes EVERY call into atiadlxx.dll. Required, not defensive
+// paranoia: a concurrent-load test (50-80 requests in parallel against
+// /api/vram, which is what a UI that polls this endpoint actually produces)
+// crashed the whole ajean-ui process with an access violation inside the DLL
+// — ajean's HTTP server runs each request on its own goroutine, so two
+// requests landing on adlAMDHotspotTempC at the same instant is the normal
+// case, not a rare edge case. AMD's ADL predates Go/goroutines by a decade
+// and gives no documented thread-safety guarantee; holding this lock for the
+// DLL's full create→query→destroy sequence is the only way to guarantee it's
+// never entered from two goroutines at once. The calls inside are fast
+// (single-digit ms), so serializing them isn't a meaningful bottleneck even
+// under the same load that used to crash it.
+var adlCallMu sync.Mutex
+
 // adlAMDHotspotTempC returns the junction/hotspot temperature (°C) of the
 // first present AMD adapter ADL reports, and whether a real reading was
 // obtained. On a machine with more than one physical AMD GPU this only ever
@@ -123,6 +137,9 @@ type adlPMLogDataOutput struct {
 // deduplicating by bus/device/function, not attempted here since it's not
 // this machine's situation.
 func adlAMDHotspotTempC() (int, bool) {
+	adlCallMu.Lock()
+	defer adlCallMu.Unlock()
+
 	if err := adlDLL.Load(); err != nil {
 		return 0, false
 	}

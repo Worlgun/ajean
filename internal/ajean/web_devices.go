@@ -330,19 +330,14 @@ func applyWindowsDedicatedUsage(gpus []map[string]any) {
 		return
 	}
 	sort.Slice(adapters, func(i, j int) bool { return adapters[i].DedicatedMiB > adapters[j].DedicatedMiB })
-	// Température : TEMPORAIREMENT DÉSACTIVÉE. adlAMDHotspotTempC (voir
-	// web_devices_adl_windows.go) a fait planter tout le process ajean-ui à
-	// deux reprises en usage réel — une première fois par épuisement de la
-	// table de callbacks Windows (corrigé), une seconde plus vite encore sous
-	// un test de charge, ce qui pointe vers un second problème : atiadlxx.dll
-	// n'est probablement pas thread-safe, et le serveur HTTP d'ajean traite
-	// chaque requête sur sa propre goroutine — des appels concurrents dans
-	// cette DLL corrompent vraisemblablement son état interne. Le disent la
-	// désactivation ci-dessous, le temps de durcir ça (mutex global autour de
-	// tous les appels ADL) et de le retester sous charge concurrente en dehors
-	// d'ajean avant de le rebrancher. VRAM + utilisation restent inchangées,
-	// stables, et ne dépendent pas de l'ADL.
-	amdTemp, amdTempOK := 0, false
+	// Température : via l'ADL d'AMD (voir web_devices_adl_windows.go). Deux
+	// bugs y ont été trouvés et corrigés avant de rebrancher cet appel : une
+	// fuite de callback Windows (table épuisée après ~2000 appels cumulés) et
+	// un accès concurrent non sérialisé dans atiadlxx.dll (crash sous charge
+	// réelle — plusieurs requêtes web en parallèle entrant dans la DLL en même
+	// temps). adlAMDHotspotTempC tient maintenant un mutex sur tout son appel ;
+	// voir web_devices_adl_windows.go pour le détail des deux incidents.
+	amdTemp, amdTempOK := adlAMDHotspotTempC()
 	amdTempUsed := false
 	ai := 0
 	for _, g := range gpus {
