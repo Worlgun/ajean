@@ -4265,6 +4265,15 @@ async function runBenchUI(){
 }
 async function switchTo(n,name){
   if(!await askConfirm('Basculer vers « '+name+' » et redémarrer le service ?', {title:'Changer de preset', okText:'Basculer'})) return;
+  await applyPresetSwitch(n);
+}
+// Bascule effective vers le preset n (1-based), SANS confirmation — factorisé
+// hors de switchTo() pour que saveItem() puisse la réutiliser après avoir
+// enregistré le preset ACTIF : sauvegarder ses réglages ne relançait pas le
+// moteur, seul un clic sur la ligne (donc rebasculer sur lui-même) le faisait.
+// Un utilisateur qui vient de choisir un mmproj puis cliqué « enregistrer » n'a
+// pas à redemander confirmation pour appliquer ce qu'il vient d'accepter.
+async function applyPresetSwitch(n){
   toast('switching…');
   // Retour visuel IMMÉDIAT : la ligne visée s'allume et clignote. Le serveur met
   // plusieurs secondes à redémarrer le service ; sans ça la liste ne bougeait pas
@@ -5258,6 +5267,20 @@ async function saveItem(){
     : {name, old: editingKey, content};
   const r = await jpost(K.saveUrl, payload);
   if(!r.ok){ toast('erreur : ' + (r.error||'')); return; }
+  // Enregistrer les réglages du preset ACTIF ne les applique pas tout seul : le
+  // moteur tourne déjà avec l'ancienne config tant qu'on ne rebascule pas dessus
+  // (switchTo). Sans ça, un changement qui doit relancer llama-server (modèle,
+  // CTX, mmproj…) reste sans effet malgré le "enregistré", et il faut cliquer la
+  // ligne du preset une deuxième fois pour qu'il se passe quelque chose.
+  if(editingKind==='preset' && editingKey){
+    const presets = await jget('/api/presets');
+    const idx = presets.findIndex(p => p.id===editingKey);
+    if(idx>=0 && presets[idx].active){
+      closeModal();
+      await applyPresetSwitch(idx+1);
+      return;
+    }
+  }
   toast('enregistré'); closeModal(); K.reload();
 }
 async function delItem(){
