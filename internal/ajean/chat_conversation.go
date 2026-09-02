@@ -25,11 +25,28 @@ import (
 
 // maxLogEvents plafonne le journal d'AFFICHAGE (pas la vue modèle). Depuis la
 // coalescence en fin de tour (compactLogLocked), un tour terminé ne pèse plus
-// qu'une poignée d'événements au lieu d'un par token → 20000 couvre des
-// centaines de tours. La marge sert surtout à absorber UN tour en cours (streamé
-// token par token) avant sa coalescence : un très gros tour (long raisonnement +
-// réponse) ne doit pas se faire tronquer le début avant d'être compacté.
-const maxLogEvents = 20000
+// qu'une poignée d'événements au lieu d'un par token → cette limite couvre des
+// centaines de tours normaux. La marge sert surtout à absorber UN tour en cours
+// (streamé token par token) avant sa coalescence : un très gros tour (long
+// raisonnement + réponse) ne doit pas se faire tronquer le début avant d'être
+// compacté.
+//
+// Observé en usage réel (2026-09-02) : un tour à raisonnement prolongé (~15 670
+// tokens de réponse visible + environ 15-16 min de raisonnement pur avant, sans
+// doute plusieurs dizaines de milliers de tokens supplémentaires) a dépassé
+// l'ancienne limite de 20000 AVANT sa propre coalescence — le début de la
+// conversation (messages précédents) s'est fait tronquer du journal de rejeu,
+// invisible au rechargement de la page (toujours présent dans la conversation
+// persistée, /api/chat/export, seul le REJEU SSE en a perdu la trace). Relevé à
+// 200000 : ~20 Mo de LogEvent en pire cas, négligeable, et il faudrait un tour
+// encore ~10x plus extrême que celui observé pour re-atteindre cette limite. Pas
+// une garantie absolue dans l'infini — la fusion incrémentale (au lieu de
+// seulement en fin de tour) supprimerait le risque structurellement, mais elle
+// touche au chemin de diffusion EN DIRECT (numéros de séquence lus par
+// sort.Search côté abonnés) d'une façon qui n'a pas pu être vérifiée sans risque
+// de duplication de texte pour un onglet connecté en direct pendant un tour —
+// laissé de côté pour cette raison.
+const maxLogEvents = 200000
 
 // LogEvent = un événement d'affichage rejouable (un delta SSE + son numéro de
 // séquence monotone + un horodatage serveur en ms). Le TS permet au client de
