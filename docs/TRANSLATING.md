@@ -89,13 +89,29 @@ From the repository root, with Go installed:
 go run ./tools/verify-i18n
 ```
 
-This reports, per language, how many of the 1020 reference keys (against
-`fr`) are present, and lists exactly which ones are still missing (or, if a
-key was accidentally retyped instead of copy-pasted, which ones don't match
-any French key — almost always a typo). A language doesn't need to be 100%
+This reports, per language, how many of the reference keys (against `fr`)
+are present, and lists exactly which ones are still missing (or, if a key
+was accidentally retyped instead of copy-pasted, which ones don't match any
+French key — almost always a typo). A language doesn't need to be 100%
 translated to be useful — `t()` (the lookup function, in `00b-i18n.js`) falls
 back to French for any key missing in the active language, so a partial
 translation degrades gracefully instead of breaking anything.
+
+It also prints a `⚠` warning for any key whose value you left **identical**
+to the French one — a strong sign it got copy-pasted and never actually
+translated (the key is present, so the missing-keys check above won't catch
+it). This happened for real early in this project: several section titles
+(`device.title`, `tasks.title`, `settings.title`…) were accidentally copied
+straight from English text into the French block itself and shipped that
+way for a while, unnoticed, because nothing checked value content — only
+presence. Some identical values are fine on purpose (this app borrows
+plenty of English tech words verbatim — `preset`, `backend`, `session`,
+`API`…), and those are pre-approved in a short allowlist inside
+`tools/verify-i18n/main.go` so they don't nag you every run. If your
+language's translation deliberately keeps a term as a loanword too, that's
+a legitimate choice — the warning is informational, not a failure, so it
+won't block your contribution. If you get a `⚠` for a string you just
+hadn't gotten to yet, that's the tool doing its job — go translate it.
 
 ## Building and previewing your translation
 
