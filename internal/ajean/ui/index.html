@@ -634,6 +634,11 @@ details>summary+.subhead{margin-top:4px}
 .stat-n{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .stat-v{flex:none;font-size:12.5px;color:var(--text);font-variant-numeric:tabular-nums}
 .stat-s{font-size:11px;color:var(--dim)}
+/* Historique d'utilisation GPU (60 derniers échantillons, ~3 min à 3s/poll) —
+   un simple SVG polyline, pas de lib de charts pour ça. */
+.spark{display:block;width:100%;height:22px;margin-top:2px}
+.spark polyline{fill:none;stroke:var(--accent);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.spark .spark-fill{stroke:none;fill:var(--accent);opacity:.08}
 
 /* --- Lignes clé / valeur (config active) --- */
 .kv{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:34px;
@@ -3978,6 +3983,8 @@ fr: {
   "models.bench.error": "erreur: ",
   "models.bench.total": "total",
   "models.bench.button": "bench",
+  "models.bench.vs_previous_flat": "≈ identique au dernier bench",
+  "models.bench.vs_previous": "vs dernier bench",
   "chat.prefill_cap": "Prefill",
   "chat.decode_cap": "Decode",
   "models.switch_confirm_prefix": "Basculer vers « ",
@@ -5068,6 +5075,8 @@ en: {
   "models.bench.error": "error: ",
   "models.bench.total": "total",
   "models.bench.button": "bench",
+  "models.bench.vs_previous_flat": "≈ same as last bench",
+  "models.bench.vs_previous": "vs last bench",
   "chat.prefill_cap": "Prefill",
   "chat.decode_cap": "Decode",
   "models.switch_confirm_prefix": "Switch to \"",
@@ -5814,17 +5823,45 @@ async function pickReason(eff){
     toast(t('status.reason_set_failed'));
   }
 }
+// Historique d'utilisation GPU pour le sparkline, par NOM de carte (l'ordre
+// renvoyé par /api/vram n'est pas garanti stable d'un poll à l'autre — le nom,
+// lui, ne change pas tant que la carte reste branchée). VRAM_HIST_MAX*3s de
+// fenêtre visible ; au-delà, les plus vieux échantillons tombent.
+const VRAM_HIST = {};
+const VRAM_HIST_MAX = 60;
+function pushVramHist(name, util){
+  const h = VRAM_HIST[name] || (VRAM_HIST[name] = []);
+  h.push(util);
+  if(h.length > VRAM_HIST_MAX) h.shift();
+}
+// SVG polyline à partir de l'historique — pas de lib de charts pour 8 lignes
+// de code. Toujours dessiné pleine largeur (100 unités), même avec un seul
+// point (ligne plate) : le graphe ne doit pas sauter de forme au démarrage.
+function sparkSvg(hist){
+  const w=100, h=22, pad=1;
+  const pts = hist.length ? hist : [0];
+  const step = pts.length>1 ? (w-2*pad)/(pts.length-1) : 0;
+  const y = v => (h-pad) - (Math.min(100,Math.max(0,v))/100)*(h-2*pad);
+  const coords = pts.map((v,i)=> (pad+i*step).toFixed(1)+','+y(v).toFixed(1));
+  const line = coords.join(' ');
+  const fill = pad+',' + (h-pad) + ' ' + line + ' ' + (pad+(pts.length-1)*step).toFixed(1)+','+(h-pad);
+  return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'
+    + '<polyline class="spark-fill" points="'+fill+'"></polyline>'
+    + '<polyline points="'+line+'"></polyline></svg>';
+}
 async function loadVram(){
   const gpus=await jget('/api/vram');
-  // Bloc de statistique : intitulé + valeur sur une ligne, jauge, détail dessous.
-  // Même gabarit que la RAM (voir .stat dans le CSS) — le HTML libre d'avant
-  // collait aux bords de la carte.
+  (gpus||[]).forEach(g => pushVramHist(g.name, g.util||0));
+  // Bloc de statistique : intitulé + valeur sur une ligne, jauge, détail dessous,
+  // puis le sparkline d'utilisation. Même gabarit que la RAM (voir .stat dans le
+  // CSS) — le HTML libre d'avant collait aux bords de la carte.
   document.getElementById('vram').innerHTML = (gpus||[]).map(g=>{
     const pct=Math.round(g.used*100/g.total);
     return '<div class="stat"><div class="stat-h"><span class="stat-n">'+g.name+'</span>'+
       '<span class="stat-v">'+(g.used/1024).toFixed(1)+' / '+(g.total/1024).toFixed(1)+' GiB</span></div>'+
       '<div class="bar"><div style="width:'+pct+'%"></div></div>'+
-      '<div class="stat-s">GPU '+g.util+' % · '+g.temp+' °C</div></div>';
+      '<div class="stat-s">GPU '+g.util+' % · '+g.temp+' °C</div>'+
+      sparkSvg(VRAM_HIST[g.name]||[]) + '</div>';
   }).join('') || '<div class="stat"><span class="stat-s">'+t('status.no_gpu')+'</span></div>';
 }
 async function loadRam(){
@@ -6576,6 +6613,37 @@ async function loadAll(){
 async function act(a){ toast(a+'…'); await jpost('/api/'+a); setTimeout(loadAll,1500); }
 function openBenchModal(){ showModal('bench-modal'); }
 function closeBenchModal(){ hideModal('bench-modal'); }
+
+// Écart avant/après : lu depuis le preset actif AVANT de relancer (voir
+// runBenchUI) — c'est le SEUL avant/après honnête, puisque le bench qu'on
+// s'apprête à lancer va lui-même écraser ce résultat sauvegardé dès qu'il
+// termine (saveBenchForActivePreset côté serveur). Une fois qu'on a couru,
+// il est trop tard pour comparer : il n'y a plus qu'un seul chiffre.
+async function benchBaseline(){
+  try{
+    const list = await jget('/api/presets');
+    const act = Array.isArray(list) && list.find(p => p.active);
+    return (act && act.bench) ? act.bench : null;
+  }catch(_){ return null; }
+}
+
+// Pastille +N/-N tok/s (N%) : verte si ça a progressé, rouge si ça a reculé,
+// rien si la variation est sous le bruit de mesure (±1%) — sinon un bench qui
+// varie de 0,2 tok/s d'une fois sur l'autre (bruit normal) prendrait des
+// couleurs au hasard et ferait croire à un vrai changement.
+function benchDeltaHtml(before, after){
+  if(before == null || !isFinite(before) || before <= 0) return '';
+  const diff = after - before;
+  const pct = diff / before * 100;
+  if(Math.abs(pct) < 1) return '<div class="muted" style="font-size:11px;margin-top:2px">'+t('models.bench.vs_previous_flat')+'</div>';
+  const up = diff > 0;
+  const color = up ? 'var(--ok)' : 'var(--err)';
+  const sign = up ? '+' : '';
+  return '<div style="font-size:11px;margin-top:2px;color:'+color+'">'
+    + sign+diff.toFixed(1)+' tok/s ('+sign+pct.toFixed(0)+'%) '+t('models.bench.vs_previous')
+    + '</div>';
+}
+
 async function runBenchUI(){
   const btn = document.getElementById('btn-bench');
   const rerun = document.getElementById('bench-rerun');
@@ -6589,6 +6657,7 @@ async function runBenchUI(){
     '<div class="muted" style="margin-top:8px">'+t('models.bench.desc')+'</div>' +
     '</div>';
   try{
+    const baseline = await benchBaseline(); // AVANT que le nouveau run n'écrase le précédent
     const r = await jget('/api/bench');
     if(!r.ok){
       body.innerHTML = '<div style="color:var(--err);text-align:center">'+t('models.bench.error')+r.error+'</div>';
@@ -6602,12 +6671,14 @@ async function runBenchUI(){
           '<div style="font-size:26px;color:var(--accent);font-weight:600;margin:6px 0">'+x.prompt_per_second.toFixed(0)+'</div>' +
           '<div class="muted">tok/s</div>' +
           '<div class="muted" style="font-size:11px;margin-top:8px">'+x.prompt_n+' tok · '+(x.prompt_ms/1000).toFixed(2)+'s</div>' +
+          benchDeltaHtml(baseline && baseline.prefill, x.prompt_per_second) +
         '</div>' +
         '<div style="padding:14px;background:var(--panel);border:1px solid var(--border);border-radius:8px">' +
           '<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.1em">'+t('chat.decode_cap')+'</div>' +
           '<div style="font-size:26px;color:var(--ok);font-weight:600;margin:6px 0">'+x.predicted_per_second.toFixed(1)+'</div>' +
           '<div class="muted">tok/s</div>' +
           '<div class="muted" style="font-size:11px;margin-top:8px">'+x.predicted_n+' tok · '+(x.predicted_ms/1000).toFixed(2)+'s</div>' +
+          benchDeltaHtml(baseline && baseline.decode, x.predicted_per_second) +
         '</div>' +
       '</div>' +
       '<div class="muted" style="text-align:center;font-size:11px">'+t('models.bench.total')+' '+x.elapsed_sec.toFixed(2)+'s</div>';

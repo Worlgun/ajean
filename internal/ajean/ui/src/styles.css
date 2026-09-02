@@ -604,6 +604,11 @@ details>summary+.subhead{margin-top:4px}
 .stat-n{font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .stat-v{flex:none;font-size:12.5px;color:var(--text);font-variant-numeric:tabular-nums}
 .stat-s{font-size:11px;color:var(--dim)}
+/* Historique d'utilisation GPU (60 derniers échantillons, ~3 min à 3s/poll) —
+   un simple SVG polyline, pas de lib de charts pour ça. */
+.spark{display:block;width:100%;height:22px;margin-top:2px}
+.spark polyline{fill:none;stroke:var(--accent);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.spark .spark-fill{stroke:none;fill:var(--accent);opacity:.08}
 
 /* --- Lignes clé / valeur (config active) --- */
 .kv{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:34px;

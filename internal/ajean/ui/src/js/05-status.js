@@ -264,17 +264,45 @@ async function pickReason(eff){
     toast(t('status.reason_set_failed'));
   }
 }
+// Historique d'utilisation GPU pour le sparkline, par NOM de carte (l'ordre
+// renvoyé par /api/vram n'est pas garanti stable d'un poll à l'autre — le nom,
+// lui, ne change pas tant que la carte reste branchée). VRAM_HIST_MAX*3s de
+// fenêtre visible ; au-delà, les plus vieux échantillons tombent.
+const VRAM_HIST = {};
+const VRAM_HIST_MAX = 60;
+function pushVramHist(name, util){
+  const h = VRAM_HIST[name] || (VRAM_HIST[name] = []);
+  h.push(util);
+  if(h.length > VRAM_HIST_MAX) h.shift();
+}
+// SVG polyline à partir de l'historique — pas de lib de charts pour 8 lignes
+// de code. Toujours dessiné pleine largeur (100 unités), même avec un seul
+// point (ligne plate) : le graphe ne doit pas sauter de forme au démarrage.
+function sparkSvg(hist){
+  const w=100, h=22, pad=1;
+  const pts = hist.length ? hist : [0];
+  const step = pts.length>1 ? (w-2*pad)/(pts.length-1) : 0;
+  const y = v => (h-pad) - (Math.min(100,Math.max(0,v))/100)*(h-2*pad);
+  const coords = pts.map((v,i)=> (pad+i*step).toFixed(1)+','+y(v).toFixed(1));
+  const line = coords.join(' ');
+  const fill = pad+',' + (h-pad) + ' ' + line + ' ' + (pad+(pts.length-1)*step).toFixed(1)+','+(h-pad);
+  return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">'
+    + '<polyline class="spark-fill" points="'+fill+'"></polyline>'
+    + '<polyline points="'+line+'"></polyline></svg>';
+}
 async function loadVram(){
   const gpus=await jget('/api/vram');
-  // Bloc de statistique : intitulé + valeur sur une ligne, jauge, détail dessous.
-  // Même gabarit que la RAM (voir .stat dans le CSS) — le HTML libre d'avant
-  // collait aux bords de la carte.
+  (gpus||[]).forEach(g => pushVramHist(g.name, g.util||0));
+  // Bloc de statistique : intitulé + valeur sur une ligne, jauge, détail dessous,
+  // puis le sparkline d'utilisation. Même gabarit que la RAM (voir .stat dans le
+  // CSS) — le HTML libre d'avant collait aux bords de la carte.
   document.getElementById('vram').innerHTML = (gpus||[]).map(g=>{
     const pct=Math.round(g.used*100/g.total);
     return '<div class="stat"><div class="stat-h"><span class="stat-n">'+g.name+'</span>'+
       '<span class="stat-v">'+(g.used/1024).toFixed(1)+' / '+(g.total/1024).toFixed(1)+' GiB</span></div>'+
       '<div class="bar"><div style="width:'+pct+'%"></div></div>'+
-      '<div class="stat-s">GPU '+g.util+' % · '+g.temp+' °C</div></div>';
+      '<div class="stat-s">GPU '+g.util+' % · '+g.temp+' °C</div>'+
+      sparkSvg(VRAM_HIST[g.name]||[]) + '</div>';
   }).join('') || '<div class="stat"><span class="stat-s">'+t('status.no_gpu')+'</span></div>';
 }
 async function loadRam(){

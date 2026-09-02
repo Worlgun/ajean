@@ -1,5 +1,36 @@
 function openBenchModal(){ showModal('bench-modal'); }
 function closeBenchModal(){ hideModal('bench-modal'); }
+
+// Écart avant/après : lu depuis le preset actif AVANT de relancer (voir
+// runBenchUI) — c'est le SEUL avant/après honnête, puisque le bench qu'on
+// s'apprête à lancer va lui-même écraser ce résultat sauvegardé dès qu'il
+// termine (saveBenchForActivePreset côté serveur). Une fois qu'on a couru,
+// il est trop tard pour comparer : il n'y a plus qu'un seul chiffre.
+async function benchBaseline(){
+  try{
+    const list = await jget('/api/presets');
+    const act = Array.isArray(list) && list.find(p => p.active);
+    return (act && act.bench) ? act.bench : null;
+  }catch(_){ return null; }
+}
+
+// Pastille +N/-N tok/s (N%) : verte si ça a progressé, rouge si ça a reculé,
+// rien si la variation est sous le bruit de mesure (±1%) — sinon un bench qui
+// varie de 0,2 tok/s d'une fois sur l'autre (bruit normal) prendrait des
+// couleurs au hasard et ferait croire à un vrai changement.
+function benchDeltaHtml(before, after){
+  if(before == null || !isFinite(before) || before <= 0) return '';
+  const diff = after - before;
+  const pct = diff / before * 100;
+  if(Math.abs(pct) < 1) return '<div class="muted" style="font-size:11px;margin-top:2px">'+t('models.bench.vs_previous_flat')+'</div>';
+  const up = diff > 0;
+  const color = up ? 'var(--ok)' : 'var(--err)';
+  const sign = up ? '+' : '';
+  return '<div style="font-size:11px;margin-top:2px;color:'+color+'">'
+    + sign+diff.toFixed(1)+' tok/s ('+sign+pct.toFixed(0)+'%) '+t('models.bench.vs_previous')
+    + '</div>';
+}
+
 async function runBenchUI(){
   const btn = document.getElementById('btn-bench');
   const rerun = document.getElementById('bench-rerun');
@@ -13,6 +44,7 @@ async function runBenchUI(){
     '<div class="muted" style="margin-top:8px">'+t('models.bench.desc')+'</div>' +
     '</div>';
   try{
+    const baseline = await benchBaseline(); // AVANT que le nouveau run n'écrase le précédent
     const r = await jget('/api/bench');
     if(!r.ok){
       body.innerHTML = '<div style="color:var(--err);text-align:center">'+t('models.bench.error')+r.error+'</div>';
@@ -26,12 +58,14 @@ async function runBenchUI(){
           '<div style="font-size:26px;color:var(--accent);font-weight:600;margin:6px 0">'+x.prompt_per_second.toFixed(0)+'</div>' +
           '<div class="muted">tok/s</div>' +
           '<div class="muted" style="font-size:11px;margin-top:8px">'+x.prompt_n+' tok · '+(x.prompt_ms/1000).toFixed(2)+'s</div>' +
+          benchDeltaHtml(baseline && baseline.prefill, x.prompt_per_second) +
         '</div>' +
         '<div style="padding:14px;background:var(--panel);border:1px solid var(--border);border-radius:8px">' +
           '<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.1em">'+t('chat.decode_cap')+'</div>' +
           '<div style="font-size:26px;color:var(--ok);font-weight:600;margin:6px 0">'+x.predicted_per_second.toFixed(1)+'</div>' +
           '<div class="muted">tok/s</div>' +
           '<div class="muted" style="font-size:11px;margin-top:8px">'+x.predicted_n+' tok · '+(x.predicted_ms/1000).toFixed(2)+'s</div>' +
+          benchDeltaHtml(baseline && baseline.decode, x.predicted_per_second) +
         '</div>' +
       '</div>' +
       '<div class="muted" style="text-align:center;font-size:11px">'+t('models.bench.total')+' '+x.elapsed_sec.toFixed(2)+'s</div>';
