@@ -2705,7 +2705,7 @@ button:hover{border-color:var(--dim);color:var(--text)}
             <span class="pe-row-c"><input id="s-ctx" class="pe-val" type="number" min="0" step="1024" placeholder="32768" oninput="cfgWriteKey('CTX', this.value)"><span class="pe-unit">tok</span></span>
           </div>
           <div class="pe-row">
-            <span class="pe-row-l"><span data-i18n="preset.ngl_label">Couches sur GPU</span><span class="pe-sub" data-i18n="preset.ngl_sub">999 = tout sur le GPU</span></span>
+            <span class="pe-row-l"><span data-i18n="preset.ngl_label">Couches sur GPU</span><span class="pe-sub" id="s-ngl-sub" data-i18n="preset.ngl_sub">999 = tout sur le GPU</span></span>
             <span class="pe-row-c"><input id="s-ngl" class="pe-val" type="number" min="0" step="1" placeholder="999" oninput="cfgWriteKey('NGL', this.value)"></span>
           </div>
           <div class="pe-row">
@@ -3324,6 +3324,8 @@ fr: {
   "preset.ctx_label": "Contexte",
   "preset.ngl_label": "Couches sur GPU",
   "preset.ngl_sub": "999 = tout sur le GPU",
+  "preset.ngl_model_layers_prefix": "modèle : ",
+  "preset.ngl_model_layers_suffix": " couches",
   "preset.moe_label": "Experts MoE sur CPU",
   "preset.moe_sub": "vide = non",
   "preset.threads_label": "Threads CPU",
@@ -4414,6 +4416,8 @@ en: {
   "preset.ctx_label": "Context",
   "preset.ngl_label": "Layers on GPU",
   "preset.ngl_sub": "999 = everything on GPU",
+  "preset.ngl_model_layers_prefix": "model: ",
+  "preset.ngl_model_layers_suffix": " layers",
   "preset.moe_label": "MoE experts on CPU",
   "preset.moe_sub": "empty = no",
   "preset.threads_label": "CPU threads",
@@ -6845,7 +6849,11 @@ async function populateModelPicker(){
       let tag = '';
       if(m.shards > 1) tag = ' · ' + m.shards + ' ' + t('models.picker.files');
       if(m.missing && m.missing.length) tag += ' · ⚠ ' + m.missing.length + ' ' + (m.missing.length>1?t('models.picker.missing_plural'):t('models.picker.missing_singular'));
-      opts += '<option value="'+escHtml(m.value)+'"'+on+'>'+escHtml(m.name)+'  ('+fmtSize(m.size)+tag+')</option>';
+      // data-layers posé sur l'option (pas un objet JS à part) : le nombre de
+      // couches reste disponible pour l'indice NGL sans re-fetch, y compris après
+      // un changement de sélection (onPickModel le relit directement dessus).
+      const layersAttr = m.layers ? ' data-layers="'+m.layers+'"' : '';
+      opts += '<option value="'+escHtml(m.value)+'"'+on+layersAttr+'>'+escHtml(m.name)+'  ('+fmtSize(m.size)+tag+')</option>';
     }
     html += groups.length > 1
       ? '<optgroup label="'+escHtml(g.home ? t('models.picker.ajean_folder') : g.dir)+'">'+opts+'</optgroup>'
@@ -6858,6 +6866,21 @@ async function populateModelPicker(){
   }
   sel.innerHTML = html;
   if(cur && !matched) setModelDirsOpen(true);
+  updateNglHint();
+}
+// Complète le sous-libellé du réglage NGL avec le nombre total de couches du
+// modèle sélectionné (issue #43 upstream) — "999 = tout sur le GPU" seul ne
+// dit rien de ce que "999" représente réellement pour CE modèle ; ça évite de
+// saturer la VRAM à l'aveugle quand on veut au contraire en garder pour le
+// contexte. Lu directement sur l'<option> (data-layers, posé par
+// populateModelPicker) : pas de second appel réseau au choix du modèle.
+function updateNglHint(){
+  const sub = document.getElementById('s-ngl-sub');
+  const sel = document.getElementById('m-model');
+  if(!sub || !sel) return;
+  const opt = sel.selectedOptions && sel.selectedOptions[0];
+  const layers = opt && opt.dataset.layers;
+  sub.textContent = t('preset.ngl_sub') + (layers ? ' · ' + t('preset.ngl_model_layers_prefix') + layers + t('preset.ngl_model_layers_suffix') : '');
 }
 // ---- Dossiers de modèles : AJEAN_HOME + dossiers ajoutés (disque externe…) ---
 // Réglage rare : replié derrière une ligne, comme l'éditeur de .env brut.
@@ -6928,6 +6951,7 @@ function onPickModel(){
     ta.value = 'MODEL="'+val+'"\n' + ta.value;
   }
   toast('MODEL='+val);
+  updateNglHint();
 }
 
 // --- Vision (projecteur multimodal --mmproj) --------------------------------
@@ -8510,7 +8534,7 @@ function confirmPending(text){
 let REPLAYING=true;
 // État de rendu du tour courant, délimité par les événements user / turn_done.
 let T=null;
-function newTurn(){ T={ reasonEl:null, contentEl:null, pendingToolEl:null, activeEl:null, typingEl:null, fullContent:'', fullReason:'', turnCollapsibles:[], serverStats:null, reasonTok:0, contentTok:0, toolTok:0, reasonFirstTs:0, reasonLastTs:0, contentFirstTs:0, contentLastTs:0 }; }
+function newTurn(){ T={ reasonEl:null, contentEl:null, pendingToolEl:null, activeEl:null, typingEl:null, fullContent:'', fullReason:'', turnCollapsibles:[], serverStats:null, reasonTok:0, contentTok:0, toolTok:0, reasonFirstTs:0, reasonLastTs:0, contentFirstTs:0, contentLastTs:0, model:null }; }
 // « Élément actif » = la bulle qui porte le shimmer. Le voile reste dessus tant
 // qu'une nouvelle étape (raisonnement / outil / réponse) n'a pas pris le relais —
 // y compris pendant que l'IA LIT la réponse d'un outil terminé. On ne coupe donc
@@ -8653,6 +8677,9 @@ function finalizeTurn(elapsedMs){
   if(ELAPSED){ clearInterval(ELAPSED.timer); ELAPSED=null; }
   genStatusOn(false);
   const parts=[];
+  // En premier, façon "qui a répondu" — utile surtout si tu as changé de preset
+  // depuis le tour précédent ; sinon c'est juste un rappel discret et cohérent.
+  if(T.model) parts.push(T.model);
   if(elapsedMs>0) parts.push(fmtElapsed(elapsedMs/1000));
   if(tok>0){ parts.push(fmtTok(tok)+' tok'); if(rate!=null) parts.push(rate.toFixed(1)+' tok/s'); }
   if(!parts.length){ removeGenEl(); scrollMaybe(true); return; }
@@ -8887,6 +8914,11 @@ function handleDelta(d){
     TURN_ENDED=true; elapsedStop(); smoothReset(); if(renderTimer){ clearTimeout(renderTimer); renderTimer=null; } renderPending=null; PENDING=null; document.getElementById('chat').innerHTML=''; newTurn(); setCtxUsed(0); setCompactCount(0); lastSeq=0; setBusy(false); return; }
   if(d.user!==undefined){
     newTurn();
+    // Preset actif AU MOMENT de l'envoi (issue #45 upstream : savoir quel modèle a
+    // répondu à quoi après un changement en cours de conversation). Posé une fois
+    // par tour sur le MÊME delta que `user`, donc rejoué à l'identique — pas de
+    // traitement replay séparé à écrire.
+    if(d.model) T.model=d.model;
     let el=PENDING;
     if(!confirmPending(d.user)) el=addMsg('user', d.user);
     // Pièces jointes du tour : rendues DANS la bulle. La bulle en attente en
