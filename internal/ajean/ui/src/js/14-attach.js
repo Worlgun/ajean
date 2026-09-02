@@ -308,7 +308,7 @@ async function uploadAttach(a){
     } while(off<a.size);
     a.state='ok'; a.file=null;   // le contenu ne sert plus à rien côté page
   }catch(e){
-    a.state='err'; a.error=(e&&e.message)||'échec';
+    a.state='err'; a.error=(e&&e.message)||t('attach.failed');
     toast(t('attach.quote_open')+a.name+t('attach.quote_close')+' : '+a.error);
   }
   renderAttach();
@@ -317,7 +317,7 @@ function addFiles(files){
   for(const f of files||[]){
     if(f.size>ATTACH_MAX){ toast(t('attach.quote_open')+f.name+t('attach.quote_close')+t('attach.too_big_middle')+fmtSize(f.size)+t('attach.too_big_max')+fmtSize(ATTACH_MAX)); continue; }
     if(!f.size){ toast(t('attach.quote_open')+f.name+t('attach.quote_close')+t('attach.empty_middle')); continue; }
-    const rec={id:++ATTACH_SEQ, name:f.name||'fichier', size:f.size, file:f, path:null, state:'queued'};
+    const rec={id:++ATTACH_SEQ, name:f.name||t('attach.unnamed_file'), size:f.size, file:f, path:null, state:'queued'};
     // Vignette immédiate depuis le fichier local, sans le renvoyer : la même image
     // qu'on verra dans la bulle une fois envoyée.
     if(isImageName(rec.name)){ try{ rec.thumb=URL.createObjectURL(f); }catch(_){} }

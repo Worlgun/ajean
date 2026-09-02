@@ -2312,50 +2312,50 @@ button:hover{border-color:var(--dim);color:var(--text)}
 <div id="tracker-modal" class="modal-ov" style="display:none" onclick="if(event.target===this)closeTrackerModal()">
   <div class="modal-card" style="max-width:560px">
     <div class="modal-head">
-      <span style="display:flex;align-items:center;gap:8px"><strong>Trackers</strong><span id="tracker-count" class="sess-count"></span></span>
-      <button class="modal-x" onclick="closeTrackerModal()" aria-label="Fermer">×</button>
+      <span style="display:flex;align-items:center;gap:8px"><strong data-i18n="tracker.modal_title">Trackers</strong><span id="tracker-count" class="sess-count"></span></span>
+      <button class="modal-x" onclick="closeTrackerModal()" aria-label="Fermer" data-i18n="tracker.close_aria" data-i18n-attr="aria-label">×</button>
     </div>
     <div class="modal-body mform">
       <!-- Vue liste : une carte par tracker. -->
       <div id="tracker-list-view">
         <div class="tracker-top">
-          <span class="tracker-intro">Données datées qui s'accumulent (compteurs, relevés, trackers)</span>
-          <button class="tracker-newbtn" onclick="newTrackerUI()">+ Nouveau tracker</button>
+          <span class="tracker-intro" data-i18n="tracker.modal_intro">Données datées qui s'accumulent (compteurs, relevés, trackers)</span>
+          <button class="tracker-newbtn" onclick="newTrackerUI()" data-i18n="tracker.new_button">+ Nouveau tracker</button>
         </div>
         <div id="tracker-list" class="tracker-cards"></div>
       </div>
       <!-- Vue détail : héros (valeur du jour) + ajout + frise par année. -->
       <div id="tracker-detail-view" hidden>
-        <button class="tracker-back" onclick="trackerBack()">‹ tous les trackers</button>
+        <button class="tracker-back" onclick="trackerBack()" data-i18n="tracker.back_button">‹ tous les trackers</button>
         <div id="tracker-hero" class="tracker-hero"></div>
-        <button class="tracker-newbtn tracker-addpt" onclick="openTrackerPtModal()">+ Ajouter un point</button>
+        <button class="tracker-newbtn tracker-addpt" onclick="openTrackerPtModal()" data-i18n="tracker.add_point_button">+ Ajouter un point</button>
         <div id="tracker-events" class="tracker-timeline"></div>
       </div>
     </div>
     <div class="modal-foot">
-      <div class="foot-r"><button class="mbtn" onclick="closeTrackerModal()">Fermer</button></div>
+      <div class="foot-r"><button class="mbtn" onclick="closeTrackerModal()" data-i18n="tracker.close">Fermer</button></div>
     </div>
   </div>
 </div>
 <div id="tracker-pt-modal" class="modal-ov" style="display:none" onclick="if(event.target===this)closeTrackerPtModal()">
   <div class="modal-card" style="max-width:440px">
     <div class="modal-head">
-      <strong id="tracker-pt-title">Ajouter un point</strong>
-      <button class="modal-x" onclick="closeTrackerPtModal()" aria-label="Fermer">×</button>
+      <strong id="tracker-pt-title" data-i18n="tracker.add_point_title">Ajouter un point</strong>
+      <button class="modal-x" onclick="closeTrackerPtModal()" aria-label="Fermer" data-i18n="tracker.pt_close_aria" data-i18n-attr="aria-label">×</button>
     </div>
     <div class="modal-body mform">
       <form class="tracker-form" onsubmit="return false">
-        <textarea id="tracker-text" class="tracker-input" rows="2" placeholder="Valeur ou note (ex. abonnés : 4210)"></textarea>
+        <textarea id="tracker-text" class="tracker-input" rows="2" placeholder="Valeur ou note (ex. abonnés : 4210)" data-i18n="tracker.pt_text_placeholder" data-i18n-attr="placeholder"></textarea>
         <div class="tracker-when-wrap">
-          <label class="tracker-fld"><span>Date</span><input id="tracker-date" type="date"></label>
-          <label class="tracker-fld"><span>Heure</span><input id="tracker-time" type="time"></label>
+          <label class="tracker-fld"><span data-i18n="tracker.date_label">Date</span><input id="tracker-date" type="date"></label>
+          <label class="tracker-fld"><span data-i18n="tracker.time_label">Heure</span><input id="tracker-time" type="time"></label>
         </div>
       </form>
     </div>
     <div class="modal-foot">
       <div class="foot-r">
-        <button class="mbtn" onclick="closeTrackerPtModal()">Annuler</button>
-        <button id="tracker-add-btn" class="mbtn primary" onclick="trackerAddPoint()">Ajouter</button>
+        <button class="mbtn" onclick="closeTrackerPtModal()" data-i18n="tracker.pt_cancel">Annuler</button>
+        <button id="tracker-add-btn" class="mbtn primary" onclick="trackerAddPoint()" data-i18n="tracker.add">Ajouter</button>
       </div>
     </div>
   </div>
@@ -3028,6 +3028,18 @@ fr: {
   "tracker.renamed": "tracker renommé",
   "tracker.edit_point_title": "Modifier le point",
   "tracker.add_point_title": "Ajouter un point",
+  "tracker.modal_title": "Trackers",
+  "tracker.close_aria": "Fermer",
+  "tracker.close": "Fermer",
+  "tracker.modal_intro": "Données datées qui s'accumulent (compteurs, relevés, trackers)",
+  "tracker.new_button": "+ Nouveau tracker",
+  "tracker.back_button": "‹ tous les trackers",
+  "tracker.date_label": "Date",
+  "tracker.time_label": "Heure",
+  "tracker.add_point_button": "+ Ajouter un point",
+  "tracker.pt_close_aria": "Fermer",
+  "tracker.pt_text_placeholder": "Valeur ou note (ex. abonnés : 4210)",
+  "tracker.pt_cancel": "Annuler",
   "appearance.title": "Apparence",
   "appearance.dark_mode": "mode sombre",
   "appearance.language": "Langue",
@@ -3846,6 +3858,7 @@ fr: {
   "attach.too_big_middle": " fait ",
   "attach.too_big_max": " — maximum ",
   "attach.empty_middle": " est vide",
+  "attach.unnamed_file": "fichier",
   "projects.new_project_modal_title": "Nouveau projet",
   "chat.reasoning_in_progress": "Réflexion en cours…",
   "chat.tool_ellipsis": "Outil…",
@@ -4105,6 +4118,18 @@ en: {
   "tracker.renamed": "tracker renamed",
   "tracker.edit_point_title": "Edit point",
   "tracker.add_point_title": "Add point",
+  "tracker.modal_title": "Trackers",
+  "tracker.close_aria": "Close",
+  "tracker.close": "Close",
+  "tracker.modal_intro": "Dated data that accumulates over time (counters, readings, trackers)",
+  "tracker.new_button": "+ New tracker",
+  "tracker.back_button": "‹ all trackers",
+  "tracker.date_label": "Date",
+  "tracker.time_label": "Time",
+  "tracker.add_point_button": "+ Add point",
+  "tracker.pt_close_aria": "Close",
+  "tracker.pt_text_placeholder": "Value or note (e.g. subscribers: 4210)",
+  "tracker.pt_cancel": "Cancel",
   "appearance.title": "Appearance",
   "appearance.dark_mode": "dark mode",
   "appearance.language": "Language",
@@ -4923,6 +4948,7 @@ en: {
   "attach.too_big_middle": " is ",
   "attach.too_big_max": " — maximum ",
   "attach.empty_middle": " is empty",
+  "attach.unnamed_file": "file",
   "projects.new_project_modal_title": "New project",
   "chat.reasoning_in_progress": "Thinking…",
   "chat.tool_ellipsis": "Tool…",
@@ -9973,7 +9999,7 @@ async function uploadAttach(a){
     } while(off<a.size);
     a.state='ok'; a.file=null;   // le contenu ne sert plus à rien côté page
   }catch(e){
-    a.state='err'; a.error=(e&&e.message)||'échec';
+    a.state='err'; a.error=(e&&e.message)||t('attach.failed');
     toast(t('attach.quote_open')+a.name+t('attach.quote_close')+' : '+a.error);
   }
   renderAttach();
@@ -9982,7 +10008,7 @@ function addFiles(files){
   for(const f of files||[]){
     if(f.size>ATTACH_MAX){ toast(t('attach.quote_open')+f.name+t('attach.quote_close')+t('attach.too_big_middle')+fmtSize(f.size)+t('attach.too_big_max')+fmtSize(ATTACH_MAX)); continue; }
     if(!f.size){ toast(t('attach.quote_open')+f.name+t('attach.quote_close')+t('attach.empty_middle')); continue; }
-    const rec={id:++ATTACH_SEQ, name:f.name||'fichier', size:f.size, file:f, path:null, state:'queued'};
+    const rec={id:++ATTACH_SEQ, name:f.name||t('attach.unnamed_file'), size:f.size, file:f, path:null, state:'queued'};
     // Vignette immédiate depuis le fichier local, sans le renvoyer : la même image
     // qu'on verra dans la bulle une fois envoyée.
     if(isImageName(rec.name)){ try{ rec.thumb=URL.createObjectURL(f); }catch(_){} }
