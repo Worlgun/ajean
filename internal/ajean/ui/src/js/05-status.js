@@ -294,11 +294,19 @@ async function loadRam(){
   if(!m || !m.total){ if(box) box.style.display='none'; return; }
   if(box) box.style.display='';
   const pct=Math.round(m.used*100/m.total);
+  // Part d'ajean lui-même dans le total système (Windows seulement pour
+  // l'instant) : le total seul ne dit jamais si une machine qui sature est due
+  // au modèle chargé ou à autre chose qui tourne à côté. Absent (m.ajean_used
+  // undefined) plutôt que 0 quand indisponible — pas de "0 Go" trompeur.
+  const detailParts=[];
+  if(m.ajean_used!=null) detailParts.push(t('status.ram_ajean_prefix')+(m.ajean_used/1024).toFixed(1)+' Go');
+  if(m.llama_used!=null) detailParts.push(t('status.ram_llama_prefix')+(m.llama_used/1024).toFixed(1)+' Go');
+  const detail = detailParts.length ? ' · '+detailParts.join(' · ') : '';
   document.getElementById('ram').innerHTML =
     '<div class="stat"><div class="stat-h"><span class="stat-n">'+t('status.ram_label')+'</span>'+
     '<span class="stat-v">'+(m.used/1024).toFixed(1)+' / '+(m.total/1024).toFixed(1)+' GiB</span></div>'+
     '<div class="bar"><div style="width:'+pct+'%"></div></div>'+
-    '<div class="stat-s">'+pct+' % '+t('status.used_pct_suffix')+'</div></div>';
+    '<div class="stat-s">'+pct+' % '+t('status.used_pct_suffix')+detail+'</div></div>';
 }
 async function loadCfg(){
   // /api/llamacpp en parallèle : il indique si le BIN de la config correspond au
