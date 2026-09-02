@@ -5251,12 +5251,18 @@ function applyI18n(root) {
 
 // setLang change la langue active, réapplique aussitôt (pas de rechargement de
 // page) et synchronise avec /api/prefs (savePrefs, définie dans 02-prefs.js)
-// si elle est déjà chargée — même schéma que le thème sombre/clair.
+// si elle est déjà chargée — même schéma que le thème sombre/clair. applyI18n()
+// ne suffit pas seule : elle ne touche que les éléments statiques marqués
+// data-i18n. Tout ce qui est reconstruit en JS avec t() au moment du rendu
+// (panneaux Tâches, Moteur/Config, Agent, Internet, MCP, Réseau, clé API…)
+// garde l'ancien texte tant qu'il ne se re-rend pas — d'où le loadAll() ici
+// pour forcer un rafraîchissement immédiat de tout ce contenu dynamique.
 function setLang(lang) {
 	if (!I18N[lang]) return;
 	try { localStorage.setItem('ajean-lang', lang); } catch (e) {}
 	applyI18n();
 	if (typeof savePrefs === 'function') savePrefs();
+	if (typeof loadAll === 'function') loadAll();
 }
 
 document.addEventListener('DOMContentLoaded', function () {
