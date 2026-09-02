@@ -24,6 +24,7 @@ package ajean
 import (
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -132,12 +133,35 @@ type adlPMLogDataOutput struct {
 // never entered from two goroutines at once. The calls inside are fast
 // (single-digit ms), so serializing them isn't a meaningful bottleneck even
 // under the same load that used to crash it.
+//
+// This mutex alone isn't enough, though: a THIRD incident (an "Application
+// Hang" Windows itself force-closed after ~65 minutes of no response) hit the
+// day this fix shipped. adlAMDSensorsBlocking below has no timeout on any of
+// its ADL calls — if the DLL itself ever stalls (a driver hiccup, the GPU
+// busy with something else, anything), the goroutine holding adlCallMu never
+// returns, so it never unlocks, so every subsequent /api/vram poll (one
+// every 3s from the browser) piles up forever waiting on a lock that will
+// never be released. One bad DLL call and the app is wedged for good — worse
+// than the original crash, since a crash at least gets Windows/the user to
+// notice and restart it.
+//
+// The fix isn't a timeout on the mutex (Go can't force a stuck syscall to
+// return early — the goroutine and the lock would still be stuck forever
+// either way). It's removing the DLL call from the request path entirely:
+// adlPoller below is the ONLY goroutine that ever calls
+// adlAMDSensorsBlocking, on its own loop, independent of how many browser
+// tabs are polling /api/vram or how often. adlAMDSensors (what callers
+// actually use) just reads whatever the poller last cached — instant, never
+// blocks, and immune to the DLL by construction. If the DLL does stall, the
+// poller goroutine is the only thing that gets stuck; the cache goes stale
+// (and adlAMDSensors reports it as unavailable past adlCacheMaxAge) instead
+// of ever taking the HTTP server down with it.
 var adlCallMu sync.Mutex
 
-// adlSensors is every reading adlAMDSensors was able to obtain in one PMLog
-// query — each field's companion bool is false when that specific sensor
-// isn't supported on the card (common for e.g. board power on older ADL
-// revisions), independently of whether any of the others succeeded.
+// adlSensors is every reading adlAMDSensorsBlocking was able to obtain in one
+// PMLog query — each field's companion bool is false when that specific
+// sensor isn't supported on the card (common for e.g. board power on older
+// ADL revisions), independently of whether any of the others succeeded.
 type adlSensors struct {
 	TempC   int
 	HasTemp bool
@@ -149,23 +173,74 @@ type adlSensors struct {
 	HasPct  bool
 }
 
-// adlAMDHotspotTempC returns just the temperature from adlAMDSensors, kept
-// as a thin wrapper since it was the original entry point and other callers
-// may still reasonably want only this one value.
+// adlCacheMaxAge bounds how long a cached reading is trusted once the
+// poller stops updating it (DLL stuck, adapter unplugged mid-session,
+// whatever) — past this, adlAMDSensors reports "unavailable" instead of a
+// silently frozen, increasingly wrong number.
+const adlCacheMaxAge = 15 * time.Second
+
+// adlPollInterval matches the UI's own /api/vram poll rate (09-stream.js:
+// setInterval(loadVram, 3000)) — no point refreshing the cache faster than
+// anything will ever read it.
+const adlPollInterval = 3 * time.Second
+
+var (
+	adlCacheMu  sync.RWMutex
+	adlCacheVal adlSensors
+	adlCacheAt  time.Time
+
+	adlPollerOnce sync.Once
+)
+
+// adlAMDHotspotTempC returns just the temperature from the cache, kept as a
+// thin wrapper since it was the original entry point and other callers may
+// still reasonably want only this one value.
 func adlAMDHotspotTempC() (int, bool) {
 	s := adlAMDSensors()
 	return s.TempC, s.HasTemp
 }
 
-// adlAMDSensors returns temperature, power draw, and fan speed of the first
-// present AMD adapter ADL reports, in a single PMLog query (cheaper than
-// querying each sensor separately, and keeps them from drifting apart from
-// momentary readings taken microseconds apart). On a machine with more than
+// adlAMDSensors returns the poller's last cached reading — never touches the
+// DLL itself, so it can be called from an HTTP handler on every poll without
+// any risk of blocking on it. Starts the background poller on first call
+// (lazy: a machine with no AMD GPU, or with the web UI never opened, never
+// spins it up at all).
+func adlAMDSensors() adlSensors {
+	adlPollerOnce.Do(func() { go adlPoller() })
+	adlCacheMu.RLock()
+	defer adlCacheMu.RUnlock()
+	if time.Since(adlCacheAt) > adlCacheMaxAge {
+		return adlSensors{}
+	}
+	return adlCacheVal
+}
+
+// adlPoller owns the only goroutine allowed to call adlAMDSensorsBlocking.
+// Runs for the lifetime of the process once started — deliberately simple
+// over demand-aware (stop when no one's asked in a while, restart on
+// demand): the DLL calls are cheap (single-digit ms) and this fully avoids
+// the far worse failure mode of racing a stop/restart against a stuck call.
+func adlPoller() {
+	for {
+		v := adlAMDSensorsBlocking()
+		adlCacheMu.Lock()
+		adlCacheVal, adlCacheAt = v, time.Now()
+		adlCacheMu.Unlock()
+		time.Sleep(adlPollInterval)
+	}
+}
+
+// adlAMDSensorsBlocking does the actual ADL work — temperature, power draw,
+// and fan speed of the first present AMD adapter ADL reports, in a single
+// PMLog query (cheaper than querying each sensor separately, and keeps them
+// from drifting apart from momentary readings taken microseconds apart).
+// Called ONLY from adlPoller (see the adlCallMu doc comment above for why
+// nothing else may call this directly). On a machine with more than
 // one physical AMD GPU this only ever reports the first one — ADL enumerates
 // one entry per display OUTPUT, not per physical card, so reliably telling
 // two real cards apart would need deduplicating by bus/device/function, not
 // attempted here since it's not this machine's situation.
-func adlAMDSensors() adlSensors {
+func adlAMDSensorsBlocking() adlSensors {
 	adlCallMu.Lock()
 	defer adlCallMu.Unlock()
 
