@@ -292,7 +292,11 @@ async function populateModelPicker(){
       let tag = '';
       if(m.shards > 1) tag = ' · ' + m.shards + ' ' + t('models.picker.files');
       if(m.missing && m.missing.length) tag += ' · ⚠ ' + m.missing.length + ' ' + (m.missing.length>1?t('models.picker.missing_plural'):t('models.picker.missing_singular'));
-      opts += '<option value="'+escHtml(m.value)+'"'+on+'>'+escHtml(m.name)+'  ('+fmtSize(m.size)+tag+')</option>';
+      // data-layers posé sur l'option (pas un objet JS à part) : le nombre de
+      // couches reste disponible pour l'indice NGL sans re-fetch, y compris après
+      // un changement de sélection (onPickModel le relit directement dessus).
+      const layersAttr = m.layers ? ' data-layers="'+m.layers+'"' : '';
+      opts += '<option value="'+escHtml(m.value)+'"'+on+layersAttr+'>'+escHtml(m.name)+'  ('+fmtSize(m.size)+tag+')</option>';
     }
     html += groups.length > 1
       ? '<optgroup label="'+escHtml(g.home ? t('models.picker.ajean_folder') : g.dir)+'">'+opts+'</optgroup>'
@@ -305,6 +309,21 @@ async function populateModelPicker(){
   }
   sel.innerHTML = html;
   if(cur && !matched) setModelDirsOpen(true);
+  updateNglHint();
+}
+// Complète le sous-libellé du réglage NGL avec le nombre total de couches du
+// modèle sélectionné (issue #43 upstream) — "999 = tout sur le GPU" seul ne
+// dit rien de ce que "999" représente réellement pour CE modèle ; ça évite de
+// saturer la VRAM à l'aveugle quand on veut au contraire en garder pour le
+// contexte. Lu directement sur l'<option> (data-layers, posé par
+// populateModelPicker) : pas de second appel réseau au choix du modèle.
+function updateNglHint(){
+  const sub = document.getElementById('s-ngl-sub');
+  const sel = document.getElementById('m-model');
+  if(!sub || !sel) return;
+  const opt = sel.selectedOptions && sel.selectedOptions[0];
+  const layers = opt && opt.dataset.layers;
+  sub.textContent = t('preset.ngl_sub') + (layers ? ' · ' + t('preset.ngl_model_layers_prefix') + layers + t('preset.ngl_model_layers_suffix') : '');
 }
 // ---- Dossiers de modèles : AJEAN_HOME + dossiers ajoutés (disque externe…) ---
 // Réglage rare : replié derrière une ligne, comme l'éditeur de .env brut.
@@ -375,6 +394,7 @@ function onPickModel(){
     ta.value = 'MODEL="'+val+'"\n' + ta.value;
   }
   toast('MODEL='+val);
+  updateNglHint();
 }
 
 // --- Vision (projecteur multimodal --mmproj) --------------------------------
