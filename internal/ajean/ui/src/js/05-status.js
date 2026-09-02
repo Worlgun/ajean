@@ -264,10 +264,29 @@ async function pickReason(eff){
     toast(t('status.reason_set_failed'));
   }
 }
-// Historique d'utilisation GPU pour le sparkline, par NOM de carte (l'ordre
-// renvoyé par /api/vram n'est pas garanti stable d'un poll à l'autre — le nom,
-// lui, ne change pas tant que la carte reste branchée). VRAM_HIST_MAX*3s de
-// fenêtre visible ; au-delà, les plus vieux échantillons tombent.
+// Nom stabilisé par POSITION dans la liste — pas la donnée brute de /api/vram.
+// Repéré en vidéo : sur une carte intégrée qui sort de veille, le tout premier
+// --list-devices après le démarrage d'ajean peut renvoyer un nom générique que
+// Windows/le pilote localise dans la langue de l'OS (« Carte graphique Intel®
+// UHD 770 » chez un francophone) avant de se stabiliser sur le vrai nom
+// matériel dès le sondage suivant — un seul poll sur toute une session, jamais
+// revu ensuite. Un nom qui change n'est adopté qu'après confirmation par DEUX
+// lectures identiques de suite ; sinon on garde le dernier nom stable. Ça
+// filtre ce genre de blip quelle que soit la langue de l'OS, sans avoir à
+// reconnaître un texte précis.
+const GPU_NAME_STABLE = {};
+function stableGpuName(i, name){
+  const s = GPU_NAME_STABLE[i];
+  if(!s){ GPU_NAME_STABLE[i] = {name, pending:null}; return name; }
+  if(name === s.name){ s.pending = null; return name; }
+  if(name === s.pending){ s.name = name; s.pending = null; return name; }
+  s.pending = name;
+  return s.name;
+}
+// Historique d'utilisation GPU pour le sparkline, par nom STABILISÉ (voir
+// stableGpuName) : sans ça, le même blip de nom fragmenterait aussi l'historique
+// en deux séries au lieu d'une. VRAM_HIST_MAX*3s de fenêtre visible ; au-delà,
+// les plus vieux échantillons tombent.
 const VRAM_HIST = {};
 const VRAM_HIST_MAX = 60;
 function pushVramHist(name, util){
@@ -292,7 +311,7 @@ function sparkSvg(hist){
 }
 async function loadVram(){
   const gpus=await jget('/api/vram');
-  (gpus||[]).forEach(g => pushVramHist(g.name, g.util||0));
+  (gpus||[]).forEach((g,i) => { g.name = stableGpuName(i, g.name); pushVramHist(g.name, g.util||0); });
   // Bloc de statistique : intitulé + valeur sur une ligne, jauge, détail dessous,
   // puis le sparkline d'utilisation. Même gabarit que la RAM (voir .stat dans le
   // CSS) — le HTML libre d'avant collait aux bords de la carte.
