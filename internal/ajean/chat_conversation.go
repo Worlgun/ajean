@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -108,9 +109,43 @@ var conv = func() *Conversation {
 
 // LoadConversation recharge l'état persisté au démarrage du process. Sans état
 // enregistré (première fois) on part d'une conversation vide.
+//
+// Observé en usage réel, à deux reprises sur ce fork : après un redémarrage du
+// process, la conversation active revenait vide alors qu'elle existait bel et
+// bien — récupérable via l'historique, donc rien de perdu, mais gênant. Cause
+// probable, PAS formellement prouvée malgré une douzaine de redémarrages
+// provoqués volontairement pour la reproduire (échec à chaque tentative
+// délibérée — l'incident est trop rare/dépendant du timing pour être déclenché
+// à volonté) : getStoreBytes (comme getBytes, qu'il enveloppe) AVALE l'erreur
+// d'ouverture de la base bbolt sans la distinguer d'une absence légitime —
+// exactement le piège déjà identifié pour les secrets (voir getBytesErr). Si CE
+// n'est pas la vraie cause, le correctif reste défendable pour lui-même (même
+// piège que celui déjà corrigé ailleurs) et, surtout, transforme une éventuelle
+// PROCHAINE occurrence en incident diagnosticable : avant, un échec de lecture
+// était invisible ; maintenant il sort une ligne [conv] sur stderr avec l'erreur
+// réelle, au lieu de disparaître en silence derrière « rien à charger ».
+// Quelques tentatives espacées coûtent au pire une fraction de seconde à un
+// démarrage qui, de toute façon, réussit du premier coup dans l'immense
+// majorité des cas (aucun délai perceptible observé dans ce cas normal).
 func LoadConversation() {
-	b, ok := getStoreBytes(bkChat, "conversation")
-	if !ok || len(b) == 0 {
+	var b []byte
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		b, err = getStoreBytesErr(bkChat, "conversation")
+		if err == nil {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if err != nil {
+		// Toujours en échec après les tentatives : on le DIT (au lieu de le
+		// confondre en silence avec « rien à charger ») et on repart à vide quand
+		// même — un serveur qui refuse de démarrer serait pire, et l'ancienne
+		// conversation reste intacte dans l'historique, restaurable à la main.
+		fmt.Fprintf(os.Stderr, "[conv] conversation active illisible au démarrage (%v) — repli sur une conversation vide ; l'historique, lui, est intact\n", err)
+		return
+	}
+	if len(b) == 0 {
 		// Absente, ou chiffrée et mémoire encore verrouillée : on repart d'une
 		// conversation vide. Elle sera rechargée au déverrouillage (reloadEncryptedStores).
 		return
