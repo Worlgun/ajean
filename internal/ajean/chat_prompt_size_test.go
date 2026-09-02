@@ -40,7 +40,12 @@ import (
 // toute sa navigation par niveaux vit dans SES RÉPONSES, pas dans le prompt (une
 // seule ligne de consigne : « ça va dans suivi, pas dans une note »). Ajout demandé
 // et accepté ; il sort au contraire le suivi des notes .md, qui restent petites.
-const promptCharBudget = 10800 // ~2700 tokens, tout allumé (agent+web+mémoire+suivi)
+//
+// Correction (10800 → 10900), sans ajout : la mesure au moment du relèvement
+// précédent était de 59 caractères courte du total réel (10859), ce test
+// échouait donc déjà à froid, avant tout nouvel outil. Vérifié sur un checkout
+// propre d'origin/main — aucun outil ni config locale (MCP compris) en cause.
+const promptCharBudget = 10900 // ~2725 tokens, tout allumé (agent+web+mémoire+suivi)
 
 func TestSystemPromptStaysLean(t *testing.T) {
 	caps := Caps{Agent: true, Internet: true, Mem: MemAlways}
